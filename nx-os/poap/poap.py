@@ -20,6 +20,7 @@
 import os
 import time
 from cli import *
+import string
 
 # **** Here are all variables that parametrize this script **** 
 # These parameters should be updated with the real values used 
@@ -27,11 +28,11 @@ from cli import *
 
 # system and kickstart images, configuration: location on server (src) and target (dst)
 n9k_image_version       = "6.1.2"
-image_dir_src           = "/tftpb"
+image_dir_src           = "/tftpboot"
 ftp_image_dir_src_root  = image_dir_src
 tftp_image_dir_src_root = image_dir_src
 n9k_system_image_src    = "n9000-dk9.%s.bin" % n9k_image_version
-config_file_src         = "/tftpb/poap.cfg" 
+config_file_src         = "/tftpboot/conf" 
 image_dir_dst           = "bootflash:poap"
 system_image_dst        = n9k_system_image_src
 config_file_dst         = "volatile:poap.cfg"
@@ -44,7 +45,7 @@ required_space          = 350000
 protocol                = "scp" # protocol to use to download images/config
 
 # Host name and user credentials
-username                = "root" # tftp server account
+username                = "root" # scp server account
 ftp_username            = "anonymous" # ftp server account
 password                = "root"
 hostname                = "1.1.1.1"
@@ -65,7 +66,7 @@ md5sum_timeout          = 120
 # - 'location' - CDP neighbor of interface on which DHCPDISCOVER arrived
 #                is part of filename
 # if serial-number is abc, then filename is $config_file_src.abc
-# if cdp neighbor's device_id=abc and port_id=111, then filename is config_file_src.abc_111
+# if cdp neighbor's device_id=abc and port_id=111, then filename is config_file_src_abc_111
 # Note: the next line can be overwritten by command-line arg processing later
 config_file_type        = "static"
 
@@ -274,6 +275,15 @@ if not os.path.exists(image_dir_dst_u):
 
 import signal
 import string
+
+# Set CDP variables for location option
+# Will be used by set_config_file_src_location() function
+poap_log("INFO: show cdp neighbors interface %s" % cdp_interface)
+a = clid("show cdp neighbors interface %s" % cdp_interface)
+b = eval(a)
+cdpnei_switchName = b['TABLE_cdp_neighbor_brief_info']['ROW_cdp_neighbor_brief_info']['device_id']
+cdpnei_intfName = b['TABLE_cdp_neighbor_brief_info']['ROW_cdp_neighbor_brief_info']['port_id']
+cdpnei_intfName = string.replace(cdpnei_intfName, "/", "_")
 
 # utility functions
 
@@ -499,6 +509,11 @@ def verify_freespace ():
         poap_log("ERR : Not enough space to copy the config, kickstart image and system image, aborting!")
         abort_cleanup_exit()
 
+# figure out config filename to download based on CDP Neighbor information
+def set_config_file_src_location():
+    global config_file_src, cdpnei_switchName, cdpnei_intfName
+    config_file_src = "%s_%s_%s" % (config_file_src, cdpnei_switchName, cdpnei_intfName)
+    poap_log("INFO: Selected conf file name (location) : %s" % config_file_src)
 
 # figure out config filename to download based on serial-number
 def set_config_file_src_serial_number (): 
@@ -506,20 +521,23 @@ def set_config_file_src_serial_number ():
     config_file_src = "%s.%s" % (config_file_src, serial_number)
     poap_log("INFO: Selected config filename (serial-nb) : %s" % config_file_src)
 
+if config_file_type == "location":
+    # set source config file based on switch's location
+    set_config_file_src_location()
 
 if config_file_type == "serial_number": 
     #set source config file based on switch's serial number
     set_config_file_src_serial_number()
 
 
-# finaly do it
+# finally do it
 
 verify_freespace()
 get_system_image()
 verify_images()
 get_config()
 
-# dont let people abort the final stage that concretize everything
+# don't let people abort the final stage that concretize everything
 # not sure who would send such a signal though!!!! (sysmgr not known to care about vsh)
 signal.signal(signal.SIGTERM, sig_handler_no_exit)
 install_it()
